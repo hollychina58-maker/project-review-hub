@@ -25,6 +25,14 @@ REPO="hollychina58-maker/project-review-hub"
 REVIEWER_NAME="Codex"
 MAX_ROUNDS=5
 WORK_DIR="/tmp/codex-review"
+
+# Codex 调用方式: "cli" | "claude" | "http" | "placeholder"
+# 根据你的 Codex 实际接口选择，详见 do_review() 函数
+CODEX_MODE="placeholder"
+
+# 如果 CODEX_MODE="http"，配置以下参数:
+CODEX_HTTP_URL="http://localhost:8080/api/review"
+
 mkdir -p "$WORK_DIR"
 
 # ======================== 辅助函数 ========================
@@ -103,61 +111,73 @@ update_label() {
 do_review() {
     local issue_body="$1"
     local round="$2"
+    local review_content_file="$WORK_DIR/review-content-round-${round}.md"
     local review_prompt_file="$WORK_DIR/review-prompt-round-${round}.md"
     local review_output_file="$WORK_DIR/review-output-round-${round}.md"
+    local review_header="## 第 ${round} 轮审核 (Codex)"
 
-    # 构建审核 prompt
+    # Step 1: 将待审内容写入独立文件
+    cat > "$review_content_file" << 'CONTENT_EOF'
+CONTENT_PLACEHOLDER
+CONTENT_EOF
+    # 用 sed 替换占位符（避免 issue_body 中的特殊字符问题）
+    sed -i "s|CONTENT_PLACEHOLDER|${issue_body//$'\n'/\\n}|" "$review_content_file"
+
+    # Step 2: 构建完整 prompt（指令 + 内容）
     cat > "$review_prompt_file" << 'PROMPT_EOF'
-你是一名资深技术审核员（Codex）。你的职责是对以下技术方案进行严格的多维度审计。
+你是一名资深技术审核员（Codex）。请对以下技术方案进行严格的多维度审计。
 
-## 审核规则
-1. 对方案的每个部分逐点审计，使用 [PASS]/[CONCERN]/[REJECT]/[SUGGEST]/[QUESTION] 标签
-2. 覆盖所有审核维度：正确性、简洁性、安全性、性能、可维护性、一致性、完整性、可测试性
+审核要求：
+1. 逐点审计方案，每点使用以下标签之一：PASS / CONCERN / REJECT / SUGGEST / QUESTION
+   （注意：标签前不要加方括号，直接用大写单词后跟冒号，如 "PASS: xxx"）
+2. 覆盖维度：正确性、简洁性、安全性、性能、可维护性、一致性、完整性、可测试性
 3. 每个质疑必须包含：具体问题 + 改进建议 + 风险等级
-4. 最后给出总评：本轮整体意见（继续/接近通过/否决）+ 整体风险等级（🟢低/🟡中/🔴高）
-5. 如果所有疑虑都已解决，发出 "[PASS] LGTM — 方案审核通过，可以开始执行。"
-6. 如果有无法接受的严重问题，发出 "[REJECT] 方案否决 — <具体原因>"
+4. 最后给出总评：本轮整体意见 + 整体风险等级（低/中/高）
+5. 如果方案完全通过，回复末尾写：FINAL_VERDICT: APPROVED
+6. 如果要否决方案，回复末尾写：FINAL_VERDICT: REJECTED，并说明原因
 
-## 审核格式
-回复以 "## 第 ROUND_NUM 轮审核 (Codex)" 开头。
+回复格式：以 "## 第 ROUND_NUM 轮审核 (Codex)" 开头。
+ROUND_NUM 替换为当前轮次数字。
 
-以下是方案内容和历史讨论：
 ---
-BODY_PLACEHOLDER
----
-
-请开始审核。
 PROMPT_EOF
-
-    # 替换占位符
-    sed -i "s/BODY_PLACEHOLDER/${issue_body//$'\n'/\\n}/g" "$review_prompt_file"
-    sed -i "s/ROUND_NUM/$round/g" "$review_prompt_file"
+    cat "$review_content_file" >> "$review_prompt_file"
+    sed -i "s|ROUND_NUM|$round|g" "$review_prompt_file"
 
     # ============================================
-    # 调用 Codex CLI 进行审核
-    # 这里需要根据 Codex 的实际 CLI 接口调整！
+    # 根据 CODEX_MODE 选择调用方式
     # ============================================
 
-    log "  调用 Codex 审核..."
+    log "  调用 Codex 审核 (mode: $CODEX_MODE)..."
 
-    # --- 方式 1: Codex 有 CLI ---
-    # codex chat --file "$review_prompt_file" > "$review_output_file" 2>&1
-
-    # --- 方式 2: Codex 通过 HTTP API ---
-    # curl -s -X POST http://localhost:8080/codex/chat \
-    #   -H "Content-Type: application/json" \
-    #   -d "{\"prompt\": \"$(cat $review_prompt_file | jq -Rs .)\"}" \
-    #   > "$review_output_file"
-
-    # --- 方式 3: 当前为占位模式（将 prompt 写入文件，等待手动粘贴） ---
-    cp "$review_prompt_file" "$review_output_file"
-    echo "" >> "$review_output_file"
-    echo "---" >> "$review_output_file"
-    echo "⚠️  Codex CLI 接口未配置。请手动完成审核：" >> "$review_output_file"
-    echo "  1. 读取: $review_prompt_file" >> "$review_output_file"
-    echo "  2. 审核后将结果写入: $review_output_file" >> "$review_output_file"
-    echo "  3. 重新运行本脚本" >> "$review_output_file"
-    echo "---" >> "$review_output_file"
+    case "$CODEX_MODE" in
+        cli)
+            # 方式 1: Codex 自有 CLI
+            codex review --file "$review_prompt_file" > "$review_output_file" 2>&1
+            ;;
+        claude)
+            # 方式 2: Codex 是 Claude Code 实例
+            claude --print "$(cat "$review_prompt_file")" > "$review_output_file" 2>&1
+            ;;
+        http)
+            # 方式 3: HTTP API
+            curl -s -X POST "$CODEX_HTTP_URL" \
+                -H "Content-Type: application/json" \
+                -d "$(cat "$review_prompt_file" | jq -Rs '{prompt: .}')" \
+                > "$review_output_file" 2>&1
+            ;;
+        placeholder|*)
+            # 方式 0: 占位模式
+            echo "$review_header" > "$review_output_file"
+            echo "" >> "$review_output_file"
+            echo "⚠️  CODEX_NOT_CONFIGURED: 审核接口未配置 (CODEX_MODE=$CODEX_MODE)。" >> "$review_output_file"
+            echo "请将 script 中 CODEX_MODE 设为 cli/claude/http，或手动审核：" >> "$review_output_file"
+            echo "  输入: $review_prompt_file" >> "$review_output_file"
+            echo "  输出: $review_output_file" >> "$review_output_file"
+            echo "" >> "$review_output_file"
+            echo "FINAL_VERDICT: PENDING" >> "$review_output_file"
+            ;;
+    esac
 
     # 返回审核结果
     cat "$review_output_file"
@@ -219,12 +239,16 @@ $all_comments"
     echo "$review_result" | gh issue comment "$issue_number" --repo "$REPO" --body-file -
 
     # 根据审核结果更新标签
-    if echo "$review_result" | grep -q "\[PASS\].*LGTM"; then
+    if echo "$review_result" | grep -q "FINAL_VERDICT: APPROVED"; then
         log "  ✅ 审核通过！"
         update_label "$issue_number" "needs-review" "approved"
-    elif echo "$review_result" | grep -q "\[REJECT\].*方案否决"; then
+    elif echo "$review_result" | grep -q "FINAL_VERDICT: REJECTED"; then
         log "  ❌ 方案被否决"
         update_label "$issue_number" "needs-review" "rejected"
+    elif echo "$review_result" | grep -q "CODEX_NOT_CONFIGURED\|FINAL_VERDICT: PENDING"; then
+        log "  ⚠️  Codex 接口未配置或审核待处理，跳过此 Issue"
+        # 保持 needs-review 标签，等待 Codex 配置完成
+        return
     else
         log "  🔄 审核中，等待下一轮"
         local current_labels
