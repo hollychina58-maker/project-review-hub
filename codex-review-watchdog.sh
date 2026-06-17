@@ -28,7 +28,7 @@ WORK_DIR="/tmp/codex-review"
 
 # Codex 调用方式: "cli" | "claude" | "http" | "placeholder"
 # 根据你的 Codex 实际接口选择，详见 do_review() 函数
-CODEX_MODE="placeholder"
+CODEX_MODE="cli"
 
 # 如果 CODEX_MODE="http"，配置以下参数:
 CODEX_HTTP_URL="http://localhost:8080/api/review"
@@ -152,8 +152,13 @@ PROMPT_EOF
 
     case "$CODEX_MODE" in
         cli)
-            # 方式 1: Codex 自有 CLI
-            codex review --file "$review_prompt_file" > "$review_output_file" 2>&1
+            # 方式 1: Codex exec — 非交互模式，stdin 传入 prompt，输出到文件
+            codex exec \
+                --ephemeral \
+                --skip-git-repo-check \
+                --dangerously-bypass-approvals-and-sandbox \
+                --output-last-message "$review_output_file" \
+                - < "$review_prompt_file" 2>&1
             ;;
         claude)
             # 方式 2: Codex 是 Claude Code 实例
