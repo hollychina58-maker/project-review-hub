@@ -111,20 +111,12 @@ update_label() {
 do_review() {
     local issue_body="$1"
     local round="$2"
-    local review_content_file="$WORK_DIR/review-content-round-${round}.md"
     local review_prompt_file="$WORK_DIR/review-prompt-round-${round}.md"
     local review_output_file="$WORK_DIR/review-output-round-${round}.md"
     local review_header="## 第 ${round} 轮审核 (Codex)"
 
-    # Step 1: 将待审内容写入独立文件
-    cat > "$review_content_file" << 'CONTENT_EOF'
-CONTENT_PLACEHOLDER
-CONTENT_EOF
-    # 用 sed 替换占位符（避免 issue_body 中的特殊字符问题）
-    sed -i "s|CONTENT_PLACEHOLDER|${issue_body//$'\n'/\\n}|" "$review_content_file"
-
-    # Step 2: 构建完整 prompt（指令 + 内容）
-    cat > "$review_prompt_file" << 'PROMPT_EOF'
+    # 构建 prompt：先写指令头，再拼接待审内容文件
+    cat > "$review_prompt_file" << PROMPT_EOF
 你是一名资深技术审核员（Codex）。请对以下技术方案进行严格的多维度审计。
 
 审核要求：
@@ -136,13 +128,13 @@ CONTENT_EOF
 5. 如果方案完全通过，回复末尾写：FINAL_VERDICT: APPROVED
 6. 如果要否决方案，回复末尾写：FINAL_VERDICT: REJECTED，并说明原因
 
-回复格式：以 "## 第 ROUND_NUM 轮审核 (Codex)" 开头。
-ROUND_NUM 替换为当前轮次数字。
+回复格式：以 "## 第 ${round} 轮审核 (Codex)" 开头。
 
 ---
 PROMPT_EOF
-    cat "$review_content_file" >> "$review_prompt_file"
-    sed -i "s|ROUND_NUM|$round|g" "$review_prompt_file"
+
+    # 将待审内容追加到 prompt 文件（printf 比 sed 安全，保留原文字符）
+    printf '%s\n' "$issue_body" >> "$review_prompt_file"
 
     # ============================================
     # 根据 CODEX_MODE 选择调用方式
