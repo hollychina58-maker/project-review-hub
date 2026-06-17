@@ -145,12 +145,22 @@ PROMPT_EOF
     case "$CODEX_MODE" in
         cli)
             # 方式 1: Codex exec — 非交互模式，stdin 传入 prompt，输出到文件
+            # 先清除旧文件，避免残留内容污染
+            rm -f "$review_output_file"
+            # stdout 丢弃，只保留 --output-last-message 写入的文件
             codex exec \
                 --ephemeral \
                 --skip-git-repo-check \
                 --dangerously-bypass-approvals-and-sandbox \
                 --output-last-message "$review_output_file" \
-                - < "$review_prompt_file" 2>&1
+                - < "$review_prompt_file" > /dev/null 2>&1
+            # 如果 codex exec 失败（文件为空），写入错误标记
+            if [ ! -s "$review_output_file" ]; then
+                echo "$review_header" > "$review_output_file"
+                echo "" >> "$review_output_file"
+                echo "ERROR: Codex exec 未产生输出，请检查 Codex 网络连接。" >> "$review_output_file"
+                echo "FINAL_VERDICT: PENDING" >> "$review_output_file"
+            fi
             ;;
         claude)
             # 方式 2: Codex 是 Claude Code 实例
