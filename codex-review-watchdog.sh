@@ -144,21 +144,28 @@ PROMPT_EOF
 
     case "$CODEX_MODE" in
         cli)
-            # 方式 1: Codex exec — 非交互模式，stdin 传入 prompt，输出到文件
-            # 先清除旧文件，避免残留内容污染
+            # 方式 1: Codex exec — stdin 传入 prompt，捕获完整输出
             rm -f "$review_output_file"
-            # stdout 丢弃，只保留 --output-last-message 写入的文件
+            # codex exec 将模型回复同时输出到 stdout 和 --output-last-message
+            # 我们捕获 stdout 作为主输出源（更可靠）
             codex exec \
                 --ephemeral \
                 --skip-git-repo-check \
                 --dangerously-bypass-approvals-and-sandbox \
                 --output-last-message "$review_output_file" \
-                - < "$review_prompt_file" > /dev/null 2>&1
-            # 如果 codex exec 失败（文件为空），写入错误标记
-            if [ ! -s "$review_output_file" ]; then
+                - < "$review_prompt_file" > /tmp/codex-stdout.txt 2>&1
+            # 如果 --output-last-message 文件有内容，用它
+            # 否则用 stdout 捕获的内容
+            if [ -s "$review_output_file" ]; then
+                # 文件有内容，使用它
+                :
+            elif [ -s /tmp/codex-stdout.txt ]; then
+                # 从 stdout 提取模型回复（跳过 codex 启动日志行）
+                grep -v "^OpenAI Codex\|^--------\|^workdir:\|^model:\|^provider:\|^approval:\|^sandbox:\|^reasoning\|^session id:" /tmp/codex-stdout.txt > "$review_output_file"
+            else
                 echo "$review_header" > "$review_output_file"
                 echo "" >> "$review_output_file"
-                echo "ERROR: Codex exec 未产生输出，请检查 Codex 网络连接。" >> "$review_output_file"
+                echo "ERROR: Codex exec 未产生输出。" >> "$review_output_file"
                 echo "FINAL_VERDICT: PENDING" >> "$review_output_file"
             fi
             ;;
